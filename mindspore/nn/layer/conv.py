@@ -21,11 +21,11 @@ from mindspore.ops.primitive import constexpr
 from mindspore.common.parameter import Parameter
 from mindspore.common.initializer import initializer
 from mindspore.common.tensor import Tensor
-from mindspore._checkparam import Validator, Rel, twice
+from mindspore._checkparam import Validator, Rel, twice, triple
 from mindspore._extends import cell_attr_register
 from ..cell import Cell
 
-__all__ = ['Conv2d', 'Conv2dTranspose', 'Conv1d', 'Conv1dTranspose']
+__all__ = ['Conv2d', 'Conv2dTranspose', 'Conv1d', 'Conv1dTranspose', 'Conv3d']
 
 
 class _Conv(Cell):
@@ -846,4 +846,224 @@ class Conv1dTranspose(_Conv):
                                                   self.has_bias,
                                                   self.weight_init,
                                                   self.bias_init)
+        return s
+
+
+
+class Conv3d(Cell):
+    r"""
+    3D convolution layer.
+
+    Applies a 3D convolution over an input tensor which is typically of shape :math:`(N, C_{in}, D_{in}, H_{in}, W_{in})`,
+    where :math:`N` is batch size, :math:`C_{in}` is channel number, and :math:`D_{in}, H_{in}, W_{in})` are height and width.
+    For each batch of shape :math:`(C_{in}, D_{in}, H_{in}, W_{in})`, the formula is defined as:
+
+    .. math::
+
+        out_j = \sum_{i=0}^{C_{in} - 1} ccor(W_{ij}, X_i) + b_j,
+
+    where :math:`ccor` is the cross-correlation operator, :math:`C_{in}` is the input channel number, :math:`j` ranges
+    from :math:`0` to :math:`C_{out} - 1`, :math:`W_{ij}` corresponds to the :math:`i`-th channel of the :math:`j`-th
+    filter and :math:`out_{j}` corresponds to the :math:`j`-th channel of the output. :math:`W_{ij}` is a slice
+    of kernel and it has shape :math:`(\text{ks_d}, \text{ks_h}, \text{ks_w})`, where :math:`\text{ks_d}`, :math:`\text{ks_h}` and
+    :math:`\text{ks_w}` are the depth, height and width of the convolution kernel. The full kernel has shape
+    :math:`(C_{out}, C_{in} // \text{group}, \text{ks_d}, \text{ks_h}, \text{ks_w})`, where group is the group number
+    to split the input in the channel dimension.
+
+    If the 'pad_mode' is set to be "valid", the output depth, height and width will be
+    :math:`\left \lfloor{1 + \frac{D_{in} + 2 \times \text{padding} - \text{ks_d} -
+    (\text{ks_d} - 1) \times (\text{dilation} - 1) }{\text{stride}}} \right \rfloor`,    
+    :math:`\left \lfloor{1 + \frac{H_{in} + 2 \times \text{padding} - \text{ks_h} -
+    (\text{ks_h} - 1) \times (\text{dilation} - 1) }{\text{stride}}} \right \rfloor`    and
+    :math:`\left \lfloor{1 + \frac{W_{in} + 2 \times \text{padding} - \text{ks_w} -
+    (\text{ks_w} - 1) \times (\text{dilation} - 1) }{\text{stride}}} \right \rfloor`    respectively.
+
+    The first introduction can be found in paper `Gradient Based Learning Applied to Document Recognition
+    <http://vision.stanford.edu/cs598_spring07/papers/Lecun98.pdf>`_.
+
+    Args:
+        in_channels (int): The number of input channel :math:`C_{in}`.
+        out_channels (int): The number of output channel :math:`C_{out}`.
+        kernel_size (Union[int, tuple[int]]): The data type is int or a tuple of 3 integers. Specifies the depth, height
+            and width of the 3D convolution window. Single int means the value is for all the depth, height and the width of
+            the kernel. A tuple of 3 ints means the first value is for the depth and others are for the
+            height and width of the kernel.
+        stride (Union[int, tuple[int]]): The distance of kernel moving, an int number that represents
+            the depth, height and width of movement are strides, or a tuple of three int numbers that
+            represent depth, height and width of movement respectively. Default: 1.
+        pad_mode (str): Specifies padding mode. The optional values are
+            "same", "valid", "pad". Default: "same".
+
+            - same: Adopts the way of completion. The depth, height and width of the output will be the same as
+              the input. The total number of padding will be calculated in horizontal and vertical
+              directions and evenly distributed to head and tail, top and bottom, left and right if possible. Otherwise, the
+              last extra padding will be done from the tail, bottom and the right side. If this mode is set, `padding`
+              must be 0.
+
+            - valid: Adopts the way of discarding. The possible largest depth, height and width of output will be returned
+              without padding. Extra pixels will be discarded. If this mode is set, `padding`
+              must be 0.
+
+            - pad: Implicit paddings on three sides of the input. The number of `padding` will be padded to the input
+              Tensor borders. `padding` must be greater than or equal to 0.
+
+        padding (Union[int, tuple[int]]): Implicit paddings on three sides of the input. If `padding` is one integer,
+                    the paddings of head, tail, top, bottom, left and right are the same, equal to padding. If `padding` is a tuple
+                    with six integers, the paddings of head, tail, top, bottom, left and right will be equal to padding[0],
+                    padding[1], padding[2], padding[3], padding[4], and padding[5] accordingly. Default: 0.
+        dilation (Union[int, tuple[int]]): The data type is int or a tuple of 3 integers. Specifies the dilation rate
+                                      to use for dilated convolution. If set to be :math:`k > 1`, there will
+                                      be :math:`k - 1` pixels skipped for each sampling location. Its value must
+                                      be greater or equal to 1 and bounded by the depth, height and width of the
+                                      input. Default: 1.
+        group (int): Splits filter into groups, `in_channels` and `out_channels` must be
+            divisible by the number of groups. If the group is equal to `in_channels` and `out_channels`,
+            this 3D convolution layer also can be called 3D depthwise convolution layer. Default: 1.
+        has_bias (bool): Specifies whether the layer uses a bias vector. Default: False.
+        weight_init (Union[Tensor, str, Initializer, numbers.Number]): Initializer for the convolution kernel.
+            It can be a Tensor, a string, an Initializer or a number. When a string is specified,
+            values from 'TruncatedNormal', 'Normal', 'Uniform', 'HeUniform' and 'XavierUniform' distributions as well
+            as constant 'One' and 'Zero' distributions are possible. Alias 'xavier_uniform', 'he_uniform', 'ones'
+            and 'zeros' are acceptable. Uppercase and lowercase are both acceptable. Refer to the values of
+            Initializer for more details. Default: 'normal'.
+        bias_init (Union[Tensor, str, Initializer, numbers.Number]): Initializer for the bias vector. Possible
+            Initializer and string are the same as 'weight_init'. Refer to the values of
+            Initializer for more details. Default: 'zeros'.
+        data_format (str): The optional value for data format, is 'NDHWC' or 'NCDHW'.
+            Default: 'NCDHW'.
+
+    Inputs:
+        - **input** (Tensor) - Tensor of shape :math:`(N, C_{in}, D_{in}, H_{in}, W_{in})` \
+            or `(N, D_{in}, H_{in}, W_{in}, C_{in})`.
+
+    Outputs:
+        Tensor of shape :math:`(N, C_{out}, D_{out}, H_{out}, W_{out})` or `(N, D_{out},H_{out}, W_{out}, C_{out})`.
+
+    Supported Platforms:
+        ``GPU``
+
+    Examples:
+        >>> net = nn.Conv3d(120, 240, 4, has_bias=False, weight_init='normal')
+        >>> input = Tensor(np.ones([1, 120, 1024, 640, 32]), mindspore.float32)
+        >>> output = net(input).shape
+        >>> print(output)
+        (1, 240, 1024, 640, 32)
+    """
+
+    def __init__(self,
+                 in_channels,
+                 out_channels,
+                 kernel_size,
+                 stride=1,
+                 pad_mode='same',
+                 padding=0,
+                 dilation=1,
+                 group=1,
+                 has_bias=False,
+                 weight_init='normal',
+                 bias_init='zeros',
+                 data_format='NCDHW',
+                 transposed=False):
+        kernel_size = triple(kernel_size)
+        stride = triple(stride)
+        self._dilation = dilation
+        dilation = triple(dilation)
+
+        super(Conv3d, self).__init__()
+        self.in_channels = Validator.check_positive_int(in_channels)
+        self.out_channels = Validator.check_positive_int(out_channels)
+        self.kernel_size = kernel_size
+        self.stride = stride
+        self.pad_mode = pad_mode
+        self.weight_init = weight_init
+        self.bias_init = bias_init
+        self.format = Validator.check_string(data_format, ['NCDHW', 'NDHWC'], 'format', self.cls_name)
+        if context.get_context("device_target") != "GPU" and self.format == "NDHWC":
+            raise ValueError("NDHWC format only support in GPU target.")
+        if isinstance(padding, int):
+            Validator.check_non_negative_int(padding, 'padding', self.cls_name)
+            self.padding = padding
+        elif isinstance(padding, tuple):
+            for pad in padding:
+                Validator.check_non_negative_int(pad, 'padding item', self.cls_name)
+            self.padding = padding
+        else:
+            raise TypeError("padding type must be int/tuple(int) cannot be {}!".format(type(padding)))
+
+        self.dilation = dilation
+        self.group = Validator.check_positive_int(group)
+        self.has_bias = has_bias
+
+        if (not isinstance(kernel_size[0], int)) or (not isinstance(kernel_size[1], int)) or \
+           (not isinstance(kernel_size[2], int)) or isinstance(kernel_size[0], bool) or \
+                isinstance(kernel_size[1], bool) or isinstance(kernel_size[2], bool) or \
+                kernel_size[0] < 1 or kernel_size[1] < 1 or kernel_size[2] < 1:
+            raise ValueError("Attr 'kernel_size' of 'Conv3D' Op passed "
+                             + str(self.kernel_size) + ", should be a int or tuple and equal to or greater than 1.")
+        if (not isinstance(stride[0], int)) or (not isinstance(stride[1], int)) or \
+           (not isinstance(stride[2], int)) or isinstance(stride[0], bool) or \
+                isinstance(stride[1], bool) or isinstance(stride[2], bool) or \
+                stride[0] < 1 or stride[1] < 1 or stride[2] < 1:
+            raise ValueError("Attr 'stride' of 'Conv3D' Op passed "
+                             + str(self.stride) + ", should be a int or tuple and equal to or greater than 1.")
+        if (not isinstance(dilation[0], int)) or (not isinstance(dilation[1], int)) or \
+           (not isinstance(dilation[2], int)) or isinstance(dilation[0], bool) or \
+                isinstance(dilation[1], bool) or isinstance(dilation[2], bool) or \
+                dilation[0] < 1 or dilation[1] < 1 or dilation[2] < 1:
+            raise ValueError("Attr 'dilation' of 'Conv3D' Op passed "
+                             + str(self.dilation) + ", should be a int or tuple and equal to or greater than 1.")
+        if in_channels % group != 0:
+            raise ValueError("Attr 'in_channels' of 'Conv3D' Op must be divisible by "
+                             "attr 'group' of 'Conv3D' Op.")
+        if out_channels % group != 0:
+            raise ValueError("Attr 'out_channels' of 'Conv3D' Op must be divisible by "
+                             "attr 'group' of 'Conv3D' Op.")
+        if transposed:
+            shape = [in_channels, out_channels // group, *kernel_size]
+        else:
+            shape = [out_channels, in_channels // group, *kernel_size] if self.format == "NCDHW" else \
+                [out_channels, *kernel_size, in_channels // group]
+        self.weight = Parameter(initializer(self.weight_init, shape), name='weight')
+
+        if Validator.check_bool(has_bias):
+            self.bias = Parameter(initializer(self.bias_init, [out_channels]), name='bias')
+        else:
+            if self.bias_init != 'zeros':
+                logger.warning("Value of 'has_bias' is False, value of 'bias_init' will be ignored.")
+            self.bias = None
+        
+        self.conv3d = P.Conv3D(out_channel=self.out_channels,
+                               kernel_size=self.kernel_size,
+                               mode=1,
+                               pad_mode=self.pad_mode,
+                               pad=self.padding,
+                               stride=self.stride,
+                               dilation=self.dilation,
+                               group=self.group,
+                               data_format=self.format)
+        self.bias_add = P.BiasAdd()
+
+    def construct(self, x):
+        output = self.conv3d(x, self.weight)
+        if self.has_bias:
+            output = self.bias_add(output, self.bias)
+        return output
+
+    def extend_repr(self):
+        s = 'input_channels={}, output_channels={}, kernel_size={},' \
+            'stride={},  pad_mode={}, padding={}, dilation={}, ' \
+            'group={}, has_bias={}' \
+            'weight_init={}, bias_init={}, format={}'.format(
+                self.in_channels,
+                self.out_channels,
+                self.kernel_size,
+                self.stride,
+                self.pad_mode,
+                self.padding,
+                self.dilation,
+                self.group,
+                self.has_bias,
+                self.weight_init,
+                self.bias_init,
+                self.format)
         return s

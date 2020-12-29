@@ -136,11 +136,18 @@ class GpuKernel : public KernelMod {
     std::swap((*shape)[2], (*shape)[1]);
   }
 
+  // transpose shape: NCDHW To NDHWC
+  void ShapeNCDHW2NDHWC(std::vector<size_t> *shape) {
+    std::swap((*shape)[1], (*shape)[2]);
+    std::swap((*shape)[2], (*shape)[3]);
+    std::swap((*shape)[3], (*shape)[4]);
+  }
+
   void SetDimA(const std::vector<size_t> &shape, int *dimA, size_t len, const std::string &format) {
     if (shape.size() != len) {
       MS_EXCEPTION(ValueError) << "Invalid size of input shape " << shape.size() << "-D with dimA " << len << "-D.";
     }
-    if (format == "NCHW" || format == "DefaultFormat") {
+    if (format == "NCHW" || (format == "DefaultFormat" && len == 4)) {
       dimA[0] = SizeToInt(shape[0]);
       dimA[1] = SizeToInt(shape[1]);
       dimA[2] = SizeToInt(shape[2]);
@@ -150,15 +157,28 @@ class GpuKernel : public KernelMod {
       dimA[1] = SizeToInt(shape[3]);
       dimA[2] = SizeToInt(shape[1]);
       dimA[3] = SizeToInt(shape[2]);
+    } else if (format == "NCDHW" || (format == "DefaultFormat" && len == 5)) {
+      dimA[0] = SizeToInt(shape[0]);
+      dimA[1] = SizeToInt(shape[1]);
+      dimA[2] = SizeToInt(shape[2]);
+      dimA[3] = SizeToInt(shape[3]);
+      dimA[4] = SizeToInt(shape[4]);
+    } else if (format == "NDHWC") {
+      dimA[0] = SizeToInt(shape[0]);
+      dimA[1] = SizeToInt(shape[4]);
+      dimA[2] = SizeToInt(shape[1]);
+      dimA[3] = SizeToInt(shape[2]);
+      dimA[4] = SizeToInt(shape[3]);
     } else {
       MS_LOG(ERROR) << "Unsupported data format " << format;
     }
   }
+
   void SetStrideA(const std::vector<size_t> &shape, int *strideA, size_t len, const std::string &format) {
     if (shape.size() != len) {
       MS_EXCEPTION(ValueError) << "Invalid size of input shape " << shape.size() << "-D with strideA " << len << "-D.";
     }
-    if (format == "NCHW" || format == "DefaultFormat") {
+    if (format == "NCHW" || (format == "DefaultFormat" && len == 4)) {
       strideA[0] = SizeToInt(shape[1] * shape[2] * shape[3]);
       strideA[1] = SizeToInt(shape[2] * shape[3]);
       strideA[2] = SizeToInt(shape[3]);
@@ -168,6 +188,18 @@ class GpuKernel : public KernelMod {
       strideA[1] = 1;
       strideA[2] = SizeToInt(shape[2] * shape[3]);
       strideA[3] = SizeToInt(shape[3]);
+    } else if (format == "NCDHW" || (format == "DefaultFormat" && len == 5)) {
+      strideA[0] = SizeToInt(shape[1] * shape[2] * shape[3] * shape[4]);
+      strideA[1] = SizeToInt(shape[2] * shape[3] * shape[4]);
+      strideA[2] = SizeToInt(shape[3] * shape[4]);
+      strideA[3] = SizeToInt(shape[4]);
+      strideA[4] = 1;
+    } else if (format == "NDHWC") {
+      strideA[0] = SizeToInt(shape[1] * shape[2] * shape[3] * shape[4]);
+      strideA[1] = 1;
+      strideA[2] = SizeToInt(shape[2] * shape[3] * shape[4]);
+      strideA[3] = SizeToInt(shape[3] * shape[4]);
+      strideA[4] = SizeToInt(shape[4]);;
     } else {
       MS_LOG(ERROR) << "Unsupported data format " << format;
     }
@@ -184,6 +216,24 @@ class GpuKernel : public KernelMod {
       *c = SizeToInt(shape[3]);
       *h = SizeToInt(shape[1]);
       *w = SizeToInt(shape[2]);
+    } else {
+      MS_LOG(ERROR) << "Unsupported data format " << format;
+    }
+  }
+
+  void SetNCDHW(const std::vector<size_t> &shape, int *n, int *c, int *d, int *h, int *w, const std::string &format) {
+    if (format == "NCDHW" || format == "DefaultFormat") {
+      *n = SizeToInt(shape[0]);
+      *c = SizeToInt(shape[1]);
+      *d = SizeToInt(shape[2]);
+      *h = SizeToInt(shape[3]);
+      *w = SizeToInt(shape[4]);
+    } else if (format == "NDHWC") {
+      *n = SizeToInt(shape[0]);
+      *c = SizeToInt(shape[4]);
+      *d = SizeToInt(shape[1]);
+      *h = SizeToInt(shape[2]);
+      *w = SizeToInt(shape[3]);
     } else {
       MS_LOG(ERROR) << "Unsupported data format " << format;
     }
