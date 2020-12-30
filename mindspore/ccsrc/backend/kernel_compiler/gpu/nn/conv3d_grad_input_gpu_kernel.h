@@ -72,8 +72,8 @@ class Conv3dGradInputGpuBkwKernel : public GpuKernel {
     if (is_null_input_) {
       return true;
     }
-    T *dy = GetDeviceAddress<T>(inputs, 0);
-    T *w = GetDeviceAddress<T>(inputs, 1);
+    T *w = GetDeviceAddress<T>(inputs, 0);
+    T *dy = GetDeviceAddress<T>(inputs, 1);
     T *dx = GetDeviceAddress<T>(outputs, 0);
     T *work_space = nullptr;
     if (workspace_size_ != 0) {
@@ -110,14 +110,15 @@ class Conv3dGradInputGpuBkwKernel : public GpuKernel {
     if (!CheckParam(kernel_node)) {
       return false;
     }
-    cudnn_data_type_ = GetCudnnDataType(TypeIdLabel(AnfAlgo::GetInputDeviceDataType(kernel_node, 0)));
-    data_format_ = AnfAlgo::GetInputFormat(kernel_node, 0);
+    cudnn_data_type_ = GetCudnnDataType(TypeIdLabel(AnfAlgo::GetInputDeviceDataType(kernel_node, 1)));
+    data_format_ = AnfAlgo::GetInputFormat(kernel_node, 1);
     auto format_attr = GetAttr<std::string>(kernel_node, "data_format");
     if (format_attr == kOpFormat_NDHWC) {
       data_format_ = kOpFormat_NDHWC;
     }
-    auto dy_shape = AnfAlgo::GetInputDeviceShape(kernel_node, 0);
-    auto filter_shape = AnfAlgo::GetInputDeviceShape(kernel_node, 1);
+    auto filter_shape = AnfAlgo::GetInputDeviceShape(kernel_node, 0);
+    auto dy_shape = AnfAlgo::GetInputDeviceShape(kernel_node, 1);
+
     is_null_input_ = CHECK_NULL_INPUT(dy_shape);
     if (is_null_input_) {
       MS_LOG(WARNING) << "Conv3dGradInputGpuBkwKernel input is null.";
@@ -135,6 +136,19 @@ class Conv3dGradInputGpuBkwKernel : public GpuKernel {
     }
     SetNCDHW(input_shape, &n_, &c_, &old_depth_, &old_height_, &old_width_, data_format_);
     Set5DDesc(dy_shape, input_shape, filter_shape);
+
+    // auto print_dims = [&](const std::vector<size_t>& arr) {
+    //   std::cout << "[";
+    //   for (int i = 0; i < 5; ++i) 
+    //     std::cout << arr[i] << ",";
+    //   std::cout << "]" << std::endl;
+    // };
+    // std::cout << "dy_shape = ";
+    // print_dims(dy_shape);
+    // std::cout << "filter_shape = ";
+    // print_dims(filter_shape);
+    // std::cout << "input_shape = ";
+    // print_dims(input_shape);
 
     group_ = static_cast<int>(GetAttr<int64_t>(kernel_node, "groups"));
     CHECK_CUDNN_RET_WITH_EXCEPT(kernel_node_, cudnnSetConvolutionGroupCount(conv_desc_, group_),
@@ -265,6 +279,9 @@ class Conv3dGradInputGpuBkwKernel : public GpuKernel {
         "cudnnGetConvolutionBackwardDataWorkspaceSize failed");
       workspace_size_list_.push_back(padded_size_);
     } else {
+      // MS_LOG(WARNING) << "dy_size_ = " << dy_size_;
+      // MS_LOG(WARNING) << "w_size_ = " << w_size_;
+      // MS_LOG(WARNING) << "output_size_ = " << output_size_;
       if (!is_null_input_) {
         CHECK_CUDNN_RET_WITH_EXCEPT(kernel_node_,
                                     cudnnGetConvolutionBackwardDataWorkspaceSize(
@@ -339,6 +356,23 @@ class Conv3dGradInputGpuBkwKernel : public GpuKernel {
     SetDimA(dy_shape, dimAdy, 5, data_format_);
     SetStrideA(dy_shape, strideAdy, 5, data_format_);
     SetDimA(filter_shape, filterDimA, 5, data_format_);
+
+    // auto print_dims = [&](int * arr) {
+    //   std::cout << "[";
+    //   for (int i = 0; i < 5; ++i) 
+    //     std::cout << arr[i] << ",";
+    //   std::cout << "]" << std::endl;
+    // };
+    // std::cout << "dimA = ";
+    // print_dims(dimA);
+    // std::cout << "strideAin = ";
+    // print_dims(strideAin);
+    // std::cout << "dimAdy = ";
+    // print_dims(dimAdy);
+    // std::cout << "strideAdy = ";
+    // print_dims(strideAdy);
+    // std::cout << "filterDimA = ";
+    // print_dims(filterDimA);
 
     CHECK_CUDNN_RET_WITH_EXCEPT(kernel_node_,
                                 cudnnSetTensorNdDescriptor(dy_desc_, cudnn_data_type_, nbDims, dimAdy, strideAdy),

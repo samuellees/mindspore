@@ -267,6 +267,10 @@ class Conv3dGradFilterGpuBkwKernel : public GpuKernel {
                                                          reinterpret_cast<size_t *>(&workspace_size_)),
           "cudnnGetConvolutionBackwardFilterWorkspaceSize failed");
       }
+      MS_LOG(WARNING) << "dy_size_ = " << dy_size_;
+      MS_LOG(WARNING) << "input_size_ = " << input_size_;
+      MS_LOG(WARNING) << "output_size_ = " << output_size_;
+      MS_LOG(WARNING) << "workspace_size_ = " << workspace_size_;
     }
     (void)workspace_size_list_.insert(workspace_size_list_.begin(), workspace_size_);
   }
