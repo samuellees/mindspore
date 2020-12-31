@@ -26,7 +26,7 @@ from mindspore.communication import management
 from mindspore.ops import _selected_ops
 from ..cell import Cell
 
-__all__ = ['BatchNorm1d', 'BatchNorm2d', 'LayerNorm', 'GroupNorm', 'GlobalBatchNorm']
+__all__ = ['BatchNorm1d', 'BatchNorm2d', 'LayerNorm', 'GroupNorm', 'GlobalBatchNorm', 'InstanceNorm3d']
 
 
 class _BatchNorm(Cell):
@@ -705,3 +705,125 @@ class GroupNorm(Cell):
     def extend_repr(self):
         """Display instance object as string."""
         return 'num_groups={}, num_channels={}'.format(self.num_groups, self.num_channels)
+
+
+class InstanceNorm3d(Cell):
+    r"""
+    Instance Normalization3d layer over a 5D input.
+
+    Instance Normalization is widely used in convolutional neural networks. This operation
+    applies Instance Normalization over input as described in the paper `Instance Normalization: The Missing 
+    Ingredient for Fast Stylization <https://arxiv.org/abs/1607.08022>`_. It rescales and recenters the
+    features using a mini-batch of data and the learned parameters which can be described
+    in the following formula,
+
+    .. math::
+        y = \frac{x - mean}{\sqrt{variance + \epsilon}} * \gamma + \beta
+
+    Note:
+        Note that the formula for updating the running_mean and running_var is
+        :math:`\hat{x}_\text{new} = (1 - \text{momentum}) \times x_t + \text{momentum} \times \hat{x}`,
+        where :math:`\hat{x}` is the estimated statistic and :math:`x_t` is the new observed value.
+
+    Args:
+        batch_size (int): `N` from an expected input of size (N, C, D, H, W).
+        num_features (int): `C` from an expected input of size (N, C, D, H, W).
+        eps (float): A value added to the denominator for numerical stability. Default: 1e-5.
+        momentum (float): A floating hyperparameter of the momentum for the
+            running_mean and running_var computation. Default: 0.9.
+        affine (bool): A bool value. When set to True, gamma and beta can be learned. Default: True.
+        gamma_init (Union[Tensor, str, Initializer, numbers.Number]): Initializer for the gamma weight.
+            The values of str refer to the function `initializer` including 'zeros', 'ones', 'xavier_uniform',
+            'he_uniform', etc. Default: 'ones'.
+        beta_init (Union[Tensor, str, Initializer, numbers.Number]): Initializer for the beta weight.
+            The values of str refer to the function `initializer` including 'zeros', 'ones', 'xavier_uniform',
+            'he_uniform', etc. Default: 'zeros'.
+        moving_mean_init (Union[Tensor, str, Initializer, numbers.Number]): Initializer for the moving mean.
+            The values of str refer to the function `initializer` including 'zeros', 'ones', 'xavier_uniform',
+            'he_uniform', etc. Default: 'zeros'.
+        moving_var_init (Union[Tensor, str, Initializer, numbers.Number]): Initializer for the moving variance.
+            The values of str refer to the function `initializer` including 'zeros', 'ones', 'xavier_uniform',
+            'he_uniform', etc. Default: 'ones'.
+        data_format (str): The optional value for data format, is 'NDHWC' or 'NCDHW'.
+            Default: 'NCDHW'.
+
+    Inputs:
+        - **input** (Tensor) - Tensor of shape :math:`(N, C_{in}, D_{in}, H_{in}, W_{in})`.
+
+    Outputs:
+        Tensor, the normalized, scaled, offset tensor, of shape :math:`(N, C_{out}, D_{out}, H_{out}, W_{out})`.
+
+    Supported Platforms:
+        ``GPU``
+    """
+
+
+    @cell_attr_register
+    def __init__(self,
+                 batch_size,
+                 num_features,
+                 eps=1e-5,
+                 momentum=0.9,
+                 affine=True,
+                 gamma_init='ones',
+                 beta_init='zeros',
+                 moving_mean_init='zeros',
+                 moving_var_init='ones',
+                 input_dims='3d',
+                 data_format='NCDHW'):
+
+        super(InstanceNorm3d, self).__init__()
+        if batch_size < 1:
+            raise ValueError("batch_size must be at least 1")
+        if num_features < 1:
+            raise ValueError("num_features must be at least 1")
+
+        if momentum < 0 or momentum > 1:
+            raise ValueError("momentum should be a number in range [0, 1], but got {}".format(momentum))
+        self.format = validator.check_string(data_format, ['NCDHW', 'NDHWC'], 'format', self.cls_name)
+        if context.get_context("device_target") != "GPU" or self.format != "NCDHW":
+            raise ValueError("InstanceNorm3D only support NCDHW data_format in GPU target.")
+        self.batch_size = batch_size
+        self.num_features = num_features
+        self.eps = eps
+        self.input_dims = input_dims
+        self.moving_mean = Parameter(initializer(
+            moving_mean_init, (batch_size, num_features)), name="mean", requires_grad=False)
+        self.moving_variance = Parameter(initializer(
+            moving_var_init, (batch_size, num_features)), name="variance", requires_grad=False)
+        self.gamma = Parameter(initializer(
+            gamma_init, (batch_size, num_features)), name="gamma", requires_grad=affine)
+        self.beta = Parameter(initializer(
+            beta_init, (batch_size, num_features)), name="beta", requires_grad=affine)
+        self.shape = P.Shape()
+        self.reduce_mean = P.ReduceMean(keep_dims=True)
+        self.square = P.Square()
+        self.sqrt = P.Sqrt()
+        self.cast = P.Cast()
+        self.dtype = P.DType()
+        self.reshape = P.Reshape()
+        self.momentum = 1.0 - momentum
+
+        self.instance_norm_train = P.InstanceNorm3D(is_training=True,
+                                            epsilon=self.eps,
+                                            momentum=self.momentum,
+                                            data_format=self.format)
+
+        self.instance_norm_infer = P.InstanceNorm3D(is_training=False,
+                                            epsilon=self.eps,
+                                            momentum=self.momentum,
+                                            data_format=self.format)
+
+    def _check_data_dim(self, x):
+        if x.ndim != 5:
+            pass
+
+    def construct(self, x):
+        _shape_check_bn(self.shape(x), self.input_dims)
+        if self.training:
+            return self.instance_norm_train(x, self.gamma, self.beta, self.moving_mean, self.moving_variance)[0]
+        return self.instance_norm_infer(x, self.gamma, self.beta, self.moving_mean, self.moving_variance)[0]
+
+    def extend_repr(self):
+        return 'batch_size={}, num_features={}, eps={}, momentum={}, gamma={}, beta={}, moving_mean={}, moving_variance={}'.format(
+            self.batch_size, self.num_features, self.eps, self.momentum, self.gamma, self.beta, self.moving_mean, self.moving_variance)

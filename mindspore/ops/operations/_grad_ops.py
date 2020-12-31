@@ -204,6 +204,23 @@ class BatchNormGrad(PrimitiveWithInfer):
         return (x_type, scale_type, scale_type, reserve_1_type, reserve_2_type)
 
 
+class InstanceNorm3DGrad(PrimitiveWithInfer):
+    """Performs grad of InstanceNorm3D operation."""
+    
+    @prim_attr_register
+    def __init__(self, epsilon=1e-5, momentum=0.9):
+        self.epsilon = validator.check_float_range(epsilon, 0, 1, Rel.INC_RIGHT, 'epsilon', self.name)
+        self.momentum = validator.check_float_range(momentum, 0, 1, Rel.INC_RIGHT, 'momentum', self.name)
+        self.add_prim_attr('data_format', "NCDHW")
+
+    def infer_shape(self, y_backprop_shape, x_shape, scale_shape, saved_mean_shape, saved_variance_shape):
+        validator.check("InstanceNorm3D y_backprop_shape", y_backprop_shape, "InstanceNorm3D x_shape", x_shape)
+        return (x_shape, scale_shape, scale_shape, saved_mean_shape, saved_variance_shape)
+
+    def infer_dtype(self, y_backprop_type, x_type, scale_type, saved_mean_type, saved_variance_type):
+        return (x_type, scale_type, scale_type, saved_mean_type, saved_variance_type)
+
+
 class BiasAddGrad(PrimitiveWithInfer):
     """Computes gradients of BiasAdd."""
 

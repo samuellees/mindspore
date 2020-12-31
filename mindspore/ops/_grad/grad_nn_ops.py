@@ -685,6 +685,21 @@ def get_bprop_batch_norm(self):
     return bprop
 
 
+@bprop_getters.register(P.InstanceNorm3D)
+def get_bprop_instance_norm3d(self):
+    """Grad definition for `InstanceNorm3D` operation."""
+    input_grad = G.InstanceNorm3DGrad(self.epsilon, self.momentum)
+
+    def bprop(x, scale, b, mean, variance, out, dout):
+        out = input_grad(dout[0], x, scale, mean, variance)
+        dx = out[0]
+        dscale = out[1]
+        dbias = out[2]
+        return dx, dscale, dbias
+
+    return bprop
+
+
 @bprop_getters.register(P.LayerNorm)
 def get_bprop_layer_norm(self):
     """Grad definition for `LayerNorm` operation."""

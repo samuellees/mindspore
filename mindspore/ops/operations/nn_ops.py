@@ -1091,6 +1091,87 @@ class BatchNorm(PrimitiveWithInfer):
         return (input_x, scale, bias, input_x, input_x)
 
 
+class InstanceNorm3D(PrimitiveWithInfer):
+    r"""
+    Instance Normalization for input data and updated parameters.
+
+    Instance Normalization is widely used in convolutional neural networks. This operation
+    applies Instance Normalization over input as described in the paper `Instance Normalization: The Missing 
+    Ingredient for Fast Stylization <https://arxiv.org/abs/1607.08022>`_. It rescales and recenters the
+    features using a mini-batch of data and the learned parameters which can be described
+    in the following formula,
+
+    .. math::
+        y = \frac{x - mean}{\sqrt{variance + \epsilon}} * \gamma + \beta
+
+    where :math:`\gamma` is scale, :math:`\beta` is bias, :math:`\epsilon` is epsilon.
+
+    Args:
+        is_training (bool): If `is_training` is True, `mean` and `variance` are computed during training.
+            If `is_training` is False, they're loaded from checkpoint during inference. Default: False.
+        epsilon (float): A small value added for numerical stability. Default: 1e-5.
+        momentum (float): The hyper parameter to compute moving average for running_mean and running_var
+            (e.g. :math:`new\_running\_mean = momentum * running\_mean + (1 - momentum) * current\_mean`).
+            Momentum value must be [0, 1]. Default: 0.9.
+        data_format (str): The optional value for data format, is 'NDHWC' or 'NCDHW'.
+            Default: "NCDHW".
+
+    Inputs:
+        - **input_x** (Tensor) - Tensor of shape :math:`(N, C, D, H, W)`, with float16 or float32 data type.
+        - **scale** (Tensor) - Tensor of shape :math:`(N, C,)`, with float16 or float32 data type.
+        - **bias** (Tensor) - Tensor of shape :math:`(N, C,)`, has the same data type with `scale`.
+        - **mean** (Tensor) - Tensor of shape :math:`(N, C,)`, with float16 or float32 data type.
+        - **variance** (Tensor) - Tensor of shape :math:`(N, C,)`, has the same data type with `mean`.
+
+    Outputs:
+        Tuple of 3 Tensor, the normalized inputs and the updated parameters.
+
+        - **output_x** (Tensor) - The same type and shape as the input_x. The shape is :math:`(N, C, D, H, W)`.
+        - **updated_scale** (Tensor) - Tensor of shape :math:`(N, C,)`.
+        - **updated_bias** (Tensor) - Tensor of shape :math:`(N, C,)`.
+
+    Supported Platforms:
+        ``GPU``
+    """
+
+    @prim_attr_register
+    def __init__(self, is_training=False, epsilon=1e-5, momentum=0.9, data_format="NCDHW"):
+        validator.check_value_type('is_training', is_training, (bool,), self.name)
+        validator.check_float_range(epsilon, 0, 1, Rel.INC_RIGHT, 'epsilon', self.name)
+        validator.check_float_range(momentum, 0, 1, Rel.INC_RIGHT, 'momentum', self.name)
+        self.format = validator.check_string(data_format, ['NCDHW', 'NDHWC'], 'format', self.name)
+        if context.get_context("device_target") != "GPU" or self.format != "NCDHW":
+            raise ValueError("InstanceNorm3D only support NCDHW data_format in GPU target.")
+        self.add_prim_attr('data_format', self.format)
+        self.init_prim_io_names(inputs=['x', 'scale', 'offset', 'mean', 'variance'],
+                                outputs=['y', 'instance_mean', 'instance_variance'])
+
+    def infer_shape(self, input_x, scale, bias, mean, variance):
+        input_shape_norm = input_x if self.format == "NCDHW" else (input_x[0], input_x[4], input_x[1], input_x[2], input_x[3])
+        validator.check_equal_int(len(scale), 2, "scale rank", self.name)
+        validator.check("scale shape", scale, "bias shape", bias, Rel.EQ, self.name)
+        validator.check("scale shape[0]", scale[0], "input_x batch size", input_shape_norm[0], Rel.EQ, self.name)
+        validator.check("scale shape[1]", scale[1], "input_x channel", input_shape_norm[1], Rel.EQ, self.name)
+        if not self.is_training:
+            validator.check_equal_int(len(mean), 2, "mean rank", self.name)
+            validator.check("mean shape", mean, "variance shape", variance, Rel.EQ, self.name)
+            validator.check("mean shape", mean, "scale shape", scale, Rel.EQ, self.name)
+        return (input_x, scale, scale, scale, scale)
+
+    def infer_dtype(self, input_x, scale, bias, mean, variance):
+        validator.check_tensor_dtype_valid("input_x", input_x, [mstype.float16, mstype.float32], self.name)
+        args = {"scale": scale, "bias": bias}
+        validator.check_tensors_dtypes_same_and_valid(args, [mstype.float16, mstype.float32], self.name)
+        args_moving = {"mean": mean, "variance": variance}
+        if self.is_training:
+            valid_dtypes = [mstype.tensor_type(mstype.float16), mstype.tensor_type(mstype.float32), None]
+            validator.check_types_same_and_valid(args_moving, valid_dtypes, self.name)
+        else:
+            args_moving = {"mean": mean, "variance": variance}
+            validator.check_tensors_dtypes_same_and_valid(args_moving, [mstype.float16, mstype.float32], self.name)
+        return (input_x, scale, bias, input_x, input_x)
+
+
 class Conv2D(PrimitiveWithInfer):
     r"""
     2D convolution layer.
