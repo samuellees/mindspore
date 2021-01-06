@@ -26,7 +26,7 @@ from mindspore.communication import management
 from mindspore.ops import _selected_ops
 from ..cell import Cell
 
-__all__ = ['BatchNorm1d', 'BatchNorm2d', 'LayerNorm', 'GroupNorm', 'GlobalBatchNorm', 'InstanceNorm3d']
+__all__ = ['BatchNorm1d', 'BatchNorm2d', 'BatchNorm3d', 'LayerNorm', 'GroupNorm', 'GlobalBatchNorm', 'InstanceNorm3d']
 
 
 class _BatchNorm(Cell):
@@ -418,6 +418,125 @@ class BatchNorm2d(_BatchNorm):
     def _check_data_dim(self, x):
         if x.ndim != 4:
             pass
+
+
+class BatchNorm3d(Cell):
+    r"""
+    Batch normalization layer over a 5D input.
+
+    Batch Normalization is widely used in convolutional networks. This layer
+    applies Batch Normalization over a 5D input (a mini-batch of 3D inputs with
+    additional channel dimension) to avoid internal covariate shift as described
+    in the paper `Batch Normalization: Accelerating Deep Network Training by
+    Reducing Internal Covariate Shift <https://arxiv.org/abs/1502.03167>`_. It
+    rescales and recenters the feature using a mini-batch of data and
+    the learned parameters which can be described in the following formula.
+
+    .. math::
+        y = \frac{x - \mathrm{E}[x]}{\sqrt{\mathrm{Var}[x] + \epsilon}} * \gamma + \beta
+
+    Note:
+        The implementation of BatchNorm is different in graph mode and pynative mode, therefore that mode can not be
+        changed after net was initilized.
+        Note that the formula for updating the running_mean and running_var is
+        :math:`\hat{x}_\text{new} = (1 - \text{momentum}) \times x_t + \text{momentum} \times \hat{x}`,
+        where :math:`\hat{x}` is the estimated statistic and :math:`x_t` is the new observed value.
+
+    Args:
+        num_features (int): `C` from an expected input of size (N, C, D, H, W).
+        eps (float): A value added to the denominator for numerical stability. Default: 1e-5.
+        momentum (float): A floating hyperparameter of the momentum for the
+            running_mean and running_var computation. Default: 0.9.
+        affine (bool): A bool value. When set to True, gamma and beta can be learned. Default: True.
+        gamma_init (Union[Tensor, str, Initializer, numbers.Number]): Initializer for the gamma weight.
+            The values of str refer to the function `initializer` including 'zeros', 'ones', 'xavier_uniform',
+            'he_uniform', etc. Default: 'ones'.
+        beta_init (Union[Tensor, str, Initializer, numbers.Number]): Initializer for the beta weight.
+            The values of str refer to the function `initializer` including 'zeros', 'ones', 'xavier_uniform',
+            'he_uniform', etc. Default: 'zeros'.
+        moving_mean_init (Union[Tensor, str, Initializer, numbers.Number]): Initializer for the moving mean.
+            The values of str refer to the function `initializer` including 'zeros', 'ones', 'xavier_uniform',
+            'he_uniform', etc. Default: 'zeros'.
+        moving_var_init (Union[Tensor, str, Initializer, numbers.Number]): Initializer for the moving variance.
+            The values of str refer to the function `initializer` including 'zeros', 'ones', 'xavier_uniform',
+            'he_uniform', etc. Default: 'ones'.
+        use_batch_statistics (bool): If true, use the mean value and variance value of current batch data. If false,
+            use the mean value and variance value of specified value. If None, the training process will use the mean
+            and variance of current batch data and track the running mean and variance, the evaluation process will use
+            the running mean and variance. Default: None.
+        data_format (str): The optional value for data format, is 'NDHWC' or 'NCDHW'.
+            Default: 'NCDHW'.
+
+    Inputs:
+        - **input** (Tensor) - Tensor of shape :math:`(N, C_{in}, D_{in}, H_{in}, W_{in})`.
+
+    Outputs:
+        Tensor, the normalized, scaled, offset tensor, of shape :math:`(N, C_{out}, D_{out}, H_{out}, W_{out})`.
+
+    Supported Platforms:
+        ``GPU``
+    """
+
+    @cell_attr_register
+    def __init__(self,
+                 num_features,
+                 eps=1e-5,
+                 momentum=0.9,
+                 affine=True,
+                 gamma_init='ones',
+                 beta_init='zeros',
+                 moving_mean_init='zeros',
+                 moving_var_init='ones',
+                 use_batch_statistics=None,
+                 data_format='NCDHW'):
+        super(BatchNorm3d, self).__init__()
+        if num_features < 1:
+            raise ValueError("num_features must be at least 1")
+
+        if momentum < 0 or momentum > 1:
+            raise ValueError("momentum should be a number in range [0, 1], but got {}".format(momentum))
+        self.format = validator.check_string(data_format, ['NCDHW', 'NDHWC'], 'format', self.cls_name)
+        if context.get_context("device_target") != "GPU":
+            raise ValueError("BatchNorm3d only support in GPU target.")
+        self.use_batch_statistics = use_batch_statistics
+        self.num_features = num_features
+        self.eps = eps
+        self.moving_mean = Parameter(initializer(
+            moving_mean_init, num_features), name="mean", requires_grad=False)
+        self.moving_variance = Parameter(initializer(
+            moving_var_init, num_features), name="variance", requires_grad=False)
+        self.gamma = Parameter(initializer(
+            gamma_init, num_features), name="gamma", requires_grad=affine)
+        self.beta = Parameter(initializer(
+            beta_init, num_features), name="beta", requires_grad=affine)
+        self.shape = P.Shape()
+        self.reduce_mean = P.ReduceMean(keep_dims=True)
+        self.square = P.Square()
+        self.sqrt = P.Sqrt()
+        self.cast = P.Cast()
+        self.dtype = P.DType()
+        self.reshape = P.Reshape()
+        self.is_gpu = context.get_context("device_target") == "GPU"
+        self.is_graph_mode = context.get_context("mode") == context.GRAPH_MODE
+        self.momentum = 1.0 - momentum
+        self.bn_train = P.BatchNorm3DEx(is_training=True, mode=1, epsilon=self.eps,
+                                        momentum=self.momentum, data_format=self.format)
+        self.bn_infer = P.BatchNorm3DEx(is_training=False, mode=1, epsilon=self.eps,
+                                        momentum=self.momentum, data_format=self.format)
+
+    def construct(self, x):
+        if self.use_batch_statistics is None:
+            flag = self.training
+        else:
+            flag = self.use_batch_statistics
+
+        if flag:
+            return self.bn_train(x, self.gamma, self.beta, self.moving_mean, self.moving_variance)[0]
+        return self.bn_infer(x, self.gamma, self.beta, self.moving_mean, self.moving_variance)[0]
+
+    def extend_repr(self):
+        return 'num_features={}, eps={}, momentum={}, gamma={}, beta={}, moving_mean={}, moving_variance={}'.format(
+            self.num_features, self.eps, self.momentum, self.gamma, self.beta, self.moving_mean, self.moving_variance)
 
 
 class GlobalBatchNorm(_BatchNorm):

@@ -663,6 +663,24 @@ def get_bprop_fused_batch_norm_ex(self):
     return bprop
 
 
+@bprop_getters.register(P.BatchNorm3DEx)
+def get_bprop_batch_norm3d_ex(self):
+    """Grad definition for `BatchNorm3DEx` operation."""
+    input_grad = G.BatchNorm3DGradEx(self.epsilon, self.momentum, self.format)
+
+    def bprop(x, scale, b, mean, variance, out, dout):
+        saved_mean = out[3]
+        saved_variance = out[4]
+        reserve = out[5]
+        out = input_grad(dout[0], x, scale, saved_mean, saved_variance, reserve)
+        dx = out[0]
+        dscale = out[1]
+        dbias = out[2]
+        return dx, dscale, dbias, zeros_like(mean), zeros_like(variance)
+
+    return bprop
+
+
 @bprop_getters.register(P.BatchNorm)
 def get_bprop_batch_norm(self):
     """Grad definition for `BatchNorm` operation."""

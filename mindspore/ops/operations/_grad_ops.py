@@ -731,6 +731,25 @@ class FusedBatchNormGradEx(PrimitiveWithInfer):
         return (x_type, scale_type, scale_type)
 
 
+class BatchNorm3DGradEx(PrimitiveWithInfer):
+    """Gradients of BatchNorm3DGradEx operation."""
+
+    @prim_attr_register
+    def __init__(self, epsilon=0.0, momentum=0.1, data_format="NCDHW"):
+        self.init_prim_io_names(inputs=['dy', 'x', 'scale', 'save_mean', 'save_inv_variance', 'reserve'],
+                                outputs=['dx', 'bn_scale', 'bn_bias'])
+        self.format = validator.check_string(data_format, ['NCDHW', 'NDHWC'], 'format', self.name)
+        if context.get_context("device_target") != "GPU":
+            raise ValueError("BatchNorm3DGradEx only support in GPU target.")
+        self.add_prim_attr('data_format', self.format)
+
+    def infer_shape(self, y_backprop_shape, x_shape, scale_shape, save_mean_shape, save_variance_shape, reserve_shape):
+        return (x_shape, scale_shape, scale_shape)
+
+    def infer_dtype(self, y_backprop_type, x_type, scale_type, save_mean_type, save_variance_type, reserve_type):
+        return (x_type, scale_type, scale_type)
+
+
 class UniqueGrad(Primitive):
     """Gradients of Unique operation."""
 

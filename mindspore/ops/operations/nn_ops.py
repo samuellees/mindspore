@@ -857,6 +857,127 @@ class FusedBatchNormEx(PrimitiveWithInfer):
         return (input_x, scale, scale, scale, scale, scale)
 
 
+class BatchNorm3DEx(PrimitiveWithInfer):
+    r"""
+    BatchNorm3DEx is an extension of BatchNorm3D, BatchNorm3DEx has one more output(output reserve), 
+    reserve will be used in backpropagation phase. BatchNorm3DEx is a BatchNorm3D that
+    moving mean and moving variance will be computed instead of being loaded.
+
+    Batch Normalization is widely used in convolutional networks. This operation applies
+    Batch Normalization over input to avoid internal covariate shift as described in the
+    paper `Batch Normalization: Accelerating Deep Network Training by Reducing Internal
+    Covariate Shift <https://arxiv.org/abs/1502.03167>`_. It rescales and recenters the
+    feature using a mini-batch of data and the learned parameters which can be described
+    in the following formula.
+
+    .. math::
+        y = \frac{x - mean}{\sqrt{variance + \epsilon}} * \gamma + \beta
+
+    where :math:`\gamma` is scale, :math:`\beta` is bias, :math:`\epsilon` is epsilon.
+
+    Args:
+        mode (int): Mode of batch normalization, value is 0 or 1. Default: 0.
+        epsilon (float): A small value added for numerical stability. Default: 1e-5.
+        momentum (float): The hyper parameter to compute moving average for running_mean and running_var
+            (e.g. :math:`new\_running\_mean = momentum * running\_mean + (1 - momentum) * current\_mean`).
+            Momentum value must be [0, 1]. Default: 0.9.
+        data_format (str): The optional value for data format, is 'NDHWC' or 'NCDHW'.
+            Default: "NCDHW".
+
+    Inputs:
+        - **input_x** (Tensor) - The input of BatchNorm3DEx, Tensor of shape :math:`(N, C)`,
+          data type: float16 or float32.
+        - **scale** (Parameter) - Parameter scale, same with gamma above-mentioned, Tensor of shape :math:`(C,)`,
+          data type: float32.
+        - **bias** (Parameter) - Parameter bias, same with beta above-mentioned, Tensor of shape :math:`(C,)`,
+          data type: float32.
+        - **mean** (Parameter) - mean value, Tensor of shape :math:`(C,)`, data type: float32.
+        - **variance** (Parameter) - variance value, Tensor of shape :math:`(C,)`, data type: float32.
+
+    Outputs:
+        Tuple of 6 Tensors, the normalized input, the updated parameters and reserve.
+
+        - **output_x** (Tensor) - The output of BatchNorm3DEx, same type and shape as the `input_x`.
+        - **updated_scale** (Tensor) - Updated parameter scale, Tensor of shape :math:`(C,)`, data type: float32.
+        - **updated_bias** (Tensor) - Updated parameter bias, Tensor of shape :math:`(C,)`, data type: float32.
+        - **updated_moving_mean** (Tensor) - Updated mean value, Tensor of shape :math:`(C,)`, data type: float32.
+        - **updated_moving_variance** (Tensor) - Updated variance value, Tensor of shape :math:`(C,)`,
+          data type: float32.
+        - **reserve** (Tensor) - reserve space, Tensor of shape :math:`(C,)`, data type: float32.
+
+    Supported Platforms:
+        ``GPU``
+
+    Examples:
+        >>> import mindspore
+        >>> import mindspore.nn as nn
+        >>> import numpy as np
+        >>> from mindspore import Parameter
+        >>> from mindspore import Tensor
+        >>> from mindspore.ops import operations as ops
+        >>> class BatchNorm3DExNet(nn.Cell):
+        >>>     def __init__(self):
+        >>>         super(BatchNorm3DExNet, self).__init__()
+        >>>         self.fused_batch_norm_ex = ops.BatchNorm3DEx()
+        >>>         self.scale = Parameter(Tensor(np.ones([64]), mindspore.float32), name="scale")
+        >>>         self.bias = Parameter(Tensor(np.ones([64]), mindspore.float32), name="bias")
+        >>>         self.mean = Parameter(Tensor(np.ones([64]), mindspore.float32), name="mean")
+        >>>         self.variance = Parameter(Tensor(np.ones([64]), mindspore.float32), name="variance")
+        >>>
+        >>>     def construct(self, input_x):
+        >>>         out = self.fused_batch_norm_ex(input_x, self.scale, self.bias, self.mean, self.variance)
+        >>>         return out
+        >>>
+        >>> input_x = Tensor(np.ones([128, 64, 32, 64, 48]), mindspore.float32)
+        >>> net = BatchNorm3DExNet()
+        >>> output = net(input_x)
+        >>> result = output[0].shape
+        >>> print(result)
+        (128, 64, 32, 64, 48)
+    """
+    __mindspore_signature__ = (
+        sig.make_sig('input_x', dtype=sig.sig_dtype.T2),
+        sig.make_sig('scale', sig.sig_rw.RW_WRITE, dtype=sig.sig_dtype.T),
+        sig.make_sig('bias', sig.sig_rw.RW_WRITE, dtype=sig.sig_dtype.T),
+        sig.make_sig('mean', sig.sig_rw.RW_WRITE, dtype=sig.sig_dtype.T),
+        sig.make_sig('variance', sig.sig_rw.RW_WRITE, dtype=sig.sig_dtype.T),
+    )
+
+    @prim_attr_register
+    def __init__(self, is_training=True, mode=0, epsilon=1e-5, momentum=0.1, data_format="NCDHW"):
+        self.init_prim_io_names(inputs=['x', 'scale', 'b', 'mean', 'variance'],
+                                outputs=['y', 'save_scale', 'save_bias', 'save_mean', 'save_inv_variance', 'reserve'])
+        validator.check_value_type('is_training', is_training, (bool,), self.name)
+        self.is_training = is_training
+        self.mode = validator.check_int(mode, [0, 1], Rel.IN, 'mode', self.name)
+        self.epsilon = validator.check_float_range(epsilon, 0, 1, Rel.INC_RIGHT, 'epsilon', self.name)
+        self.momentum = validator.check_float_range(momentum, 0, 1, Rel.INC_BOTH, 'momentum', self.name)
+        self._update_parameter = True
+        self.format = validator.check_string(data_format, ['NCDHW', 'NDHWC'], 'format', self.name)
+        if context.get_context("device_target") != "GPU" and self.format == "NDHWC":
+            raise ValueError("NDHWC format only support in GPU target.")
+        self.add_prim_attr('data_format', self.format)
+
+    def infer_shape(self, input_x, scale, bias, mean, variance):
+        input_shape_norm = input_x if self.format == "NCDHW" else (input_x[0], input_x[4], input_x[1], input_x[2], input_x[3])
+        validator.check_equal_int(len(scale), 1, "scale rank", self.name)
+        validator.check("scale shape", scale, "bias shape", bias, Rel.EQ, self.name)
+        validator.check("scale shape[0]", scale[0], "input channel", input_shape_norm[1], Rel.EQ, self.name)
+        validator.check_equal_int(len(mean), 1, "mean rank", self.name)
+
+        validator.check("mean shape", mean, "variance shape", variance, Rel.EQ, self.name)
+        validator.check("mean shape", mean, "scale shape", scale, Rel.EQ, self.name)
+        return (input_x, scale, scale, scale, scale, scale)
+
+    def infer_dtype(self, input_x, scale, bias, mean, variance):
+        validator.check_tensor_dtype_valid("input_x", input_x, [mstype.float16, mstype.float32], self.name)
+        args = {"scale": scale, "bias": bias}
+        validator.check_tensors_dtypes_same_and_valid(args, [mstype.float32], self.name)
+        args_moving = {"mean": mean, "variance": variance}
+        valid_dtypes = [mstype.tensor_type(mstype.float32)]
+        validator.check_types_same_and_valid(args_moving, valid_dtypes, self.name)
+        return (input_x, scale, scale, scale, scale, scale)
+
 class BNTrainingReduce(PrimitiveWithInfer):
     """
     For the BatchNorm operation this operator update the moving averages for training and is used in conjunction with
