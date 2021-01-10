@@ -681,6 +681,28 @@ def get_bprop_batch_norm3d_ex(self):
     return bprop
 
 
+@bprop_getters.register(P.BN4Xception)
+def get_bprop_bn4xception(self):
+    """Grad definition for `BN4Xception` operation."""
+    is_training = self.is_training
+    input_grad = G.BN4XceptionGrad(self.epsilon, self.momentum, self.format)
+
+    def bprop(x, scale, b, mean, variance, out, dout):
+        if is_training:
+            saved_reserve_1 = out[3]
+            saved_reserve_2 = out[4]
+        else:
+            saved_reserve_1 = mean
+            saved_reserve_2 = variance
+        out = input_grad(dout[0], x, scale, saved_reserve_1, saved_reserve_2)
+        dx = out[0]
+        dscale = out[1]
+        dbias = out[2]
+        return dx, dscale, dbias, zeros_like(mean), zeros_like(variance)
+
+    return bprop
+
+
 @bprop_getters.register(P.BatchNorm)
 def get_bprop_batch_norm(self):
     """Grad definition for `BatchNorm` operation."""

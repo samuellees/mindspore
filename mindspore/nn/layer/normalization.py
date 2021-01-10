@@ -26,7 +26,7 @@ from mindspore.communication import management
 from mindspore.ops import _selected_ops
 from ..cell import Cell
 
-__all__ = ['BatchNorm1d', 'BatchNorm2d', 'BatchNorm3d', 'LayerNorm', 'GroupNorm', 'GlobalBatchNorm', 'InstanceNorm3d']
+__all__ = ['BatchNorm1d', 'BatchNorm2d', 'BatchNorm3d', 'Bn4Xception', 'LayerNorm', 'GroupNorm', 'GlobalBatchNorm', 'InstanceNorm3d']
 
 
 class _BatchNorm(Cell):
@@ -522,6 +522,64 @@ class BatchNorm3d(Cell):
         self.bn_train = P.BatchNorm3DEx(is_training=True, mode=1, epsilon=self.eps,
                                         momentum=self.momentum, data_format=self.format)
         self.bn_infer = P.BatchNorm3DEx(is_training=False, mode=1, epsilon=self.eps,
+                                        momentum=self.momentum, data_format=self.format)
+
+    def construct(self, x):
+        if self.use_batch_statistics is None:
+            flag = self.training
+        else:
+            flag = self.use_batch_statistics
+
+        if flag:
+            return self.bn_train(x, self.gamma, self.beta, self.moving_mean, self.moving_variance)[0]
+        return self.bn_infer(x, self.gamma, self.beta, self.moving_mean, self.moving_variance)[0]
+
+    def extend_repr(self):
+        return 'num_features={}, eps={}, momentum={}, gamma={}, beta={}, moving_mean={}, moving_variance={}'.format(
+            self.num_features, self.eps, self.momentum, self.gamma, self.beta, self.moving_mean, self.moving_variance)
+
+
+
+class Bn4Xception(Cell):
+
+    @cell_attr_register
+    def __init__(self,
+                 num_features,
+                 eps=1e-5,
+                 momentum=0.9,
+                 affine=True,
+                 gamma_init='ones',
+                 beta_init='zeros',
+                 moving_mean_init='zeros',
+                 moving_var_init='ones',
+                 use_batch_statistics=None,
+                 data_format='NCHW'):
+        super(Bn4Xception, self).__init__()
+        if num_features < 1:
+            raise ValueError("num_features must be at least 1")
+
+        if momentum < 0 or momentum > 1:
+            raise ValueError("momentum should be a number in range [0, 1], but got {}".format(momentum))
+        self.format = validator.check_string(data_format, ['NCHW', 'NHWC'], 'format', self.cls_name)
+        if context.get_context("device_target") != "GPU":
+            raise ValueError("Bn4Xception only support in GPU target.")
+        self.use_batch_statistics = use_batch_statistics
+        self.num_features = num_features
+        self.eps = eps
+        self.moving_mean = Parameter(initializer(
+            moving_mean_init, num_features), name="mean", requires_grad=False)
+        self.moving_variance = Parameter(initializer(
+            moving_var_init, num_features), name="variance", requires_grad=False)
+        self.gamma = Parameter(initializer(
+            gamma_init, num_features), name="gamma", requires_grad=affine)
+        self.beta = Parameter(initializer(
+            beta_init, num_features), name="beta", requires_grad=affine)
+        self.is_gpu = context.get_context("device_target") == "GPU"
+        self.is_graph_mode = context.get_context("mode") == context.GRAPH_MODE
+        self.momentum = 1.0 - momentum
+        self.bn_train = P.BN4Xception(is_training=True, mode=1, epsilon=self.eps,
+                                        momentum=self.momentum, data_format=self.format)
+        self.bn_infer = P.BN4Xception(is_training=False, mode=1, epsilon=self.eps,
                                         momentum=self.momentum, data_format=self.format)
 
     def construct(self, x):

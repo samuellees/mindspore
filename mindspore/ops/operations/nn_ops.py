@@ -737,6 +737,49 @@ class FusedBatchNorm(Primitive):
         self.target = context.get_context("device_target")
 
 
+class BN4Xception(PrimitiveWithInfer):
+    __mindspore_signature__ = (
+        sig.make_sig('input_x', dtype=sig.sig_dtype.T2),
+        sig.make_sig('scale', sig.sig_rw.RW_WRITE, dtype=sig.sig_dtype.T),
+        sig.make_sig('bias', sig.sig_rw.RW_WRITE, dtype=sig.sig_dtype.T),
+        sig.make_sig('mean', sig.sig_rw.RW_WRITE, dtype=sig.sig_dtype.T),
+        sig.make_sig('variance', sig.sig_rw.RW_WRITE, dtype=sig.sig_dtype.T),
+    )
+
+    @prim_attr_register
+    def __init__(self, is_training=False, mode=0, epsilon=1e-5, momentum=0.1, data_format="NCHW"):
+        self.init_prim_io_names(inputs=['x', 'scale', 'b', 'mean', 'variance'],
+                                outputs=['y', 'running_mean', 'running_variance', 'save_mean', 'save_inv_variance'])
+        self.is_training = is_training
+        self.format = validator.check_string(data_format, ['NCHW', 'NHWC'], 'format', self.name)
+        self.mode = validator.check_int(mode, [0, 1], Rel.IN, 'mode', self.name)
+        self.epsilon = validator.check_float_range(epsilon, 0, 1, Rel.INC_RIGHT, 'epsilon', self.name)
+        self.momentum = validator.check_float_range(momentum, 0, 1, Rel.INC_BOTH, 'momentum', self.name)
+        self._update_parameter = True
+        self.target = context.get_context("device_target")
+        self.add_prim_attr('data_format', self.format)
+
+    def infer_shape(self, input_x, scale, bias, mean, variance):
+        input_shape_norm = input_x if self.format == "NCHW" else (input_x[0], input_x[3], input_x[1], input_x[2])
+        validator.check_equal_int(len(scale), 1, "scale rank", self.name)
+        validator.check("scale shape", scale, "bias shape", bias, Rel.EQ, self.name)
+        validator.check("scale shape[0]", scale[0], "input channel", input_shape_norm[1], Rel.EQ, self.name)
+        validator.check_equal_int(len(mean), 1, "mean rank", self.name)
+
+        validator.check("mean shape", mean, "variance shape", variance, Rel.EQ, self.name)
+        validator.check("mean shape", mean, "scale shape", scale, Rel.EQ, self.name)
+        return (input_x, scale, scale, scale, scale)
+
+    def infer_dtype(self, input_x, scale, bias, mean, variance):
+        validator.check_tensor_dtype_valid("input_x", input_x, [mstype.float16, mstype.float32], self.name)
+        args = {"scale": scale, "bias": bias}
+        validator.check_tensors_dtypes_same_and_valid(args, [mstype.float32], self.name)
+        args_moving = {"mean": mean, "variance": variance}
+        valid_dtypes = [mstype.tensor_type(mstype.float32)]
+        validator.check_types_same_and_valid(args_moving, valid_dtypes, self.name)
+        return (input_x, scale, scale, scale, scale)
+
+
 class FusedBatchNormEx(PrimitiveWithInfer):
     r"""
     FusedBatchNormEx is an extension of FusedBatchNorm, FusedBatchNormEx has one more output(output reserve)
