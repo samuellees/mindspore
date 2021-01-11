@@ -685,7 +685,7 @@ def get_bprop_batch_norm3d_ex(self):
 def get_bprop_bn4xception(self):
     """Grad definition for `BN4Xception` operation."""
     is_training = self.is_training
-    input_grad = G.BN4XceptionGrad(self.epsilon, self.momentum, self.format)
+    input_grad = G.BN4XceptionGrad(is_training, self.epsilon, self.format)
 
     def bprop(x, scale, b, mean, variance, out, dout):
         if is_training:

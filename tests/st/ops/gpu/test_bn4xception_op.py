@@ -179,7 +179,6 @@ def test_train_stats_false_forward():
     assert np.all(diff < error)
     assert np.all(-diff < error)
 
-# FIXME: This case can not pass
 @pytest.mark.level0
 @pytest.mark.platform_x86_gpu_training
 @pytest.mark.env_onecard
@@ -189,7 +188,7 @@ def test_infer_backward():
                                [[-1.1006137, 1.1447179], [0.9015862, 0.5024918]]]]).astype(np.float32)
     np.random.seed(1)
     x_np = np.random.randn(1, 3, 2, 2).astype(np.float32)
-    input_grad_np = np.random.randn(1, 3, 2, 2).astype(np.float32)
+    output_grad_np = np.random.randn(1, 3, 2, 2).astype(np.float32)
     ms_input = Tensor(x_np)
     weight = Tensor(np.ones(3).astype(np.float32))
     bias = Tensor(np.zeros(3).astype(np.float32))
@@ -199,11 +198,5 @@ def test_infer_backward():
     ms_net = Batchnorm_Net(3, weight, bias, moving_mean, moving_var_init)
     ms_net.set_train(False)
     ms_grad = Grad(ms_net)
-    ms_out_grad_np = ms_grad(ms_input, Tensor(input_grad_np))
-    print(ms_out_grad_np)
+    ms_out_grad_np = ms_grad(ms_input, Tensor(output_grad_np))
     assert np.allclose(ms_out_grad_np[0].asnumpy(), expect_output)
-
-test_train_forward()
-test_train_backward()
-test_train_stats_false_forward()
-test_infer_backward()

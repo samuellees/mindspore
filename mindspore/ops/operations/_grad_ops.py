@@ -754,9 +754,10 @@ class BN4XceptionGrad(PrimitiveWithInfer):
     """Gradients of BN4XceptionGrad operation."""
 
     @prim_attr_register
-    def __init__(self, epsilon=0.0, momentum=0.1, data_format="NCHW"):
+    def __init__(self, is_training=False, epsilon=1e-5, data_format="NCHW"):
         self.init_prim_io_names(inputs=['dy', 'x', 'scale', 'save_mean', 'save_inv_variance'],
                                 outputs=['dx', 'bn_scale', 'bn_bias'])
+        self.is_training = validator.check_value_type('is_training', is_training, (bool,), self.name)
         self.format = validator.check_string(data_format, ['NCHW', 'NHWC'], 'format', self.name)
         if context.get_context("device_target") != "GPU":
             raise ValueError("BN4XceptionGrad only support in GPU target.")

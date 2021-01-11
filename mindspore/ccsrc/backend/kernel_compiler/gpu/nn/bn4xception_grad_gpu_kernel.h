@@ -21,6 +21,7 @@
 #include "backend/kernel_compiler/gpu/gpu_kernel.h"
 #include "backend/kernel_compiler/gpu/gpu_kernel_factory.h"
 #include "backend/kernel_compiler/gpu/kernel_constants.h"
+#include "backend/kernel_compiler/gpu/cuda_impl/batchnorm_grad_impl.cuh"
 
 namespace mindspore {
 namespace kernel {
@@ -35,6 +36,7 @@ class BN4XceptionGradGpuKernel : public GpuKernel {
         mode_(CUDNN_BATCHNORM_SPATIAL),
         epsilon_(10e-5),
         is_null_input_(false),
+        is_training_(false),
         x_desc_(nullptr),
         dy_desc_(nullptr),
         dx_desc_(nullptr),
@@ -61,17 +63,22 @@ class BN4XceptionGradGpuKernel : public GpuKernel {
     auto dx = GetDeviceAddress<T>(outputs, 0);
     auto bn_scale = GetDeviceAddress<float>(outputs, 1);
     auto bn_bias = GetDeviceAddress<float>(outputs, 2);
-
-    const float alpha_data_diff = 1;
-    const float beta_data_diff = 0;
-    const float alpha_param_diff = 1;
-    const float beta_param_diff = 0;
-    CHECK_CUDNN_RET_WITH_EXCEPT(
-      kernel_node_,
-      cudnnBatchNormalizationBackward(handle_, mode_, &alpha_data_diff, &beta_data_diff, &alpha_param_diff,
-                                      &beta_param_diff, x_desc_, x, dy_desc_, dy, dx_desc_, dx, scale_bias_desc_, scale,
-                                      bn_scale, bn_bias, epsilon_, save_mean, save_variance),
-      "Kernel Launch Failed.");
+    
+    if (is_training_) {
+      const float alpha_data_diff = 1;
+      const float beta_data_diff = 0;
+      const float alpha_param_diff = 1;
+      const float beta_param_diff = 0;
+      CHECK_CUDNN_RET_WITH_EXCEPT(
+        kernel_node_,
+        cudnnBatchNormalizationBackward(handle_, mode_, &alpha_data_diff, &beta_data_diff, &alpha_param_diff,
+                                        &beta_param_diff, x_desc_, x, dy_desc_, dy, dx_desc_, dx, scale_bias_desc_,
+                                        scale, bn_scale, bn_bias, epsilon_, save_mean, save_variance),
+        "Kernel Launch Failed.");
+    } else {
+      CalBatchNormGrad(x, dy, scale, save_mean, save_variance, dx, bn_scale, bn_bias, epsilon_, batch_, channel_,
+                       height_, width_, reinterpret_cast<cudaStream_t>(stream_ptr));
+    }
     return true;
   }
   bool Init(const CNodePtr &kernel_node) override {
@@ -100,6 +107,7 @@ class BN4XceptionGradGpuKernel : public GpuKernel {
     width_ = SizeToInt(shape[3]);
 
     mode_ = CUDNN_BATCHNORM_SPATIAL;
+    is_training_ = GetAttr<bool>(kernel_node, "is_training");
     epsilon_ = GetAttr<float>(kernel_node, "epsilon");
 
     CHECK_CUDNN_RET_WITH_EXCEPT(
@@ -171,6 +179,7 @@ class BN4XceptionGradGpuKernel : public GpuKernel {
   cudnnBatchNormMode_t mode_;
   double epsilon_;
   bool is_null_input_;
+  bool is_training_;
   cudnnTensorDescriptor_t x_desc_;
   cudnnTensorDescriptor_t dy_desc_;
   cudnnTensorDescriptor_t dx_desc_;
