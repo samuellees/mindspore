@@ -85,9 +85,17 @@ class Conv3dGradFilterGpuBkwKernel : public GpuKernel {
     if (use_pad_) {
       T *padded = GetDeviceAddress<T>(workspace, 1);
       if (data_format_ == kOpFormat_NDHWC) {
-        MS_LOG(ERROR) << "CalPadNDHWC unimplemented.";
+        CalPadNDHWC(padded_size_ / sizeof(T), x, n_, 
+                    old_depth_, old_height_, old_width_, c_, 
+                    old_depth_ + pad_depth_, old_height_ + pad_height_, old_width_ + pad_width_,
+                    pad_head_, pad_top_, pad_left_, pad_value_, padded,
+                   reinterpret_cast<cudaStream_t>(stream_ptr));
       } else {
-        MS_LOG(ERROR) << "CalPadNCDHW unimplemented.";
+        CalPad3D(padded_size_ / sizeof(T), x, n_, c_, 
+                old_depth_, old_height_, old_width_, 
+                old_depth_ + pad_depth_, old_height_ + pad_height_, old_width_ + pad_width_,
+                pad_head_, pad_top_, pad_left_, pad_value_, padded,
+               reinterpret_cast<cudaStream_t>(stream_ptr));
       }
       CHECK_CUDNN_RET_WITH_EXCEPT(
         kernel_node_,

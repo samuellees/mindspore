@@ -90,9 +90,15 @@ class Conv3dGradInputGpuBkwKernel : public GpuKernel {
                                      workspace_size_, &beta_, padded_descriptor_, padded),
         "ConvolutionBackwardData failed");
       if (data_format_ == kOpFormat_NDHWC) {
-        MS_LOG(ERROR) << "CalPadGradNDHWC unimplemented.";
+        CalPadGradNDHWC(output_size_ / sizeof(T), padded, n_, 
+                      old_depth_, old_height_, old_width_, c_, 
+                      old_depth_ + pad_depth_, old_height_ + pad_height_, old_width_ + pad_width_, 
+                      pad_head_, pad_top_, pad_left_, dx, reinterpret_cast<cudaStream_t>(stream_ptr));
       } else {
-        MS_LOG(ERROR) << "CalPadGradNCDHW unimplemented.";
+        CalPadGrad3D(output_size_ / sizeof(T), padded, n_, c_,
+                   old_depth_, old_height_, old_width_,
+                   old_depth_ + pad_depth_, old_height_ + pad_height_, old_width_ + pad_width_, 
+                   pad_head_, pad_top_, pad_left_, dx, reinterpret_cast<cudaStream_t>(stream_ptr));
       }
     } else {
       CHECK_CUDNN_RET_WITH_EXCEPT(

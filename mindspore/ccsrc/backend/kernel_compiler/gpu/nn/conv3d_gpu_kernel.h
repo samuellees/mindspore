@@ -83,11 +83,16 @@ class Conv3dGpuFwdKernel : public GpuKernel {
     if (use_pad_) {
       T *padded_addr = GetDeviceAddress<T>(workspace, 1);
       if (data_format_ == kOpFormat_NDHWC) {
-        // CalPadNDHWC unimplemented.
-        MS_LOG(ERROR) << "CalPadNDHWC unimplemented.";
+        CalPadNDHWC(padded_size_ / sizeof(T), input_addr, n_, old_depth_, old_height_, old_width_, c_, 
+                    old_depth_ + pad_depth_, old_height_ + pad_height_, old_width_ + pad_width_, 
+                    pad_head_, pad_top_, pad_left_, pad_value_, padded_addr,
+                    reinterpret_cast<cudaStream_t>(stream_ptr));
       } else {
-        // CalPad(5d) unimplemented.
-        MS_LOG(ERROR) << "CalPad(5d) unimplemented.";
+        CalPad3D(padded_size_ / sizeof(T), input_addr, n_, c_, 
+                  old_depth_, old_height_, old_width_, 
+                  old_depth_ + pad_depth_, old_height_ + pad_height_, old_width_ + pad_width_, 
+                  pad_head_, pad_top_, pad_left_, pad_value_, padded_addr,
+                  reinterpret_cast<cudaStream_t>(stream_ptr));
       }
       CHECK_CUDNN_RET_WITH_EXCEPT(
         kernel_node_,

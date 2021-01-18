@@ -25,7 +25,7 @@ from mindspore._checkparam import Validator, Rel, twice, triple
 from mindspore._extends import cell_attr_register
 from ..cell import Cell
 
-__all__ = ['Conv2d', 'Conv2dTranspose', 'Conv1d', 'Conv1dTranspose', 'Conv3d']
+__all__ = ['Conv2d', 'Conv2dTranspose', 'Conv1d', 'Conv1dTranspose', 'Conv3d', 'Conv3dTranspose']
 
 
 class _Conv(Cell):
@@ -1066,4 +1066,167 @@ class Conv3d(Cell):
                 self.weight_init,
                 self.bias_init,
                 self.format)
+        return s
+
+class Conv3dTranspose(Cell):
+
+    def __init__(self,
+                 in_channels,
+                 out_channels,
+                 kernel_size,
+                 stride=1,
+                 pad_mode='same',
+                 padding=0,
+                 dilation=1,
+                 group=1,
+                 has_bias=False,
+                 weight_init='normal',
+                 bias_init='zeros',  
+                 data_format='NCDHW'):
+        kernel_size = triple(kernel_size)
+        stride = triple(stride)
+        dilation = triple(dilation)
+        Validator.check_value_type('padding', padding, (int, tuple), self.cls_name)
+        if isinstance(padding, tuple):
+            Validator.check_equal_int(len(padding), 6, 'padding size', self.cls_name)
+        super(Conv3dTranspose, self).__init__()
+        self.in_channels = Validator.check_positive_int(in_channels)
+        self.out_channels = Validator.check_positive_int(out_channels)
+        self.kernel_size = kernel_size
+        self.stride = stride
+        self.pad_mode = pad_mode
+        self.weight_init = weight_init
+        self.bias_init = bias_init
+        self.format = Validator.check_string(data_format, ['NCDHW', 'NDHWC'], 'format', self.cls_name)
+        if context.get_context("device_target") != "GPU" and self.format == "NDHWC":
+            raise ValueError("NDHWC format only support in GPU target.")
+        if isinstance(padding, int):
+            Validator.check_non_negative_int(padding, 'padding', self.cls_name)
+            self.padding = padding
+        elif isinstance(padding, tuple):
+            for pad in padding:
+                Validator.check_non_negative_int(pad, 'padding item', self.cls_name)
+            self.padding = padding
+        else:
+            raise TypeError("padding type must be int/tuple(int) cannot be {}!".format(type(padding)))
+        if pad_mode not in ('valid', 'same', 'pad'):
+            raise ValueError('Attr \'pad_mode\' of \'Conv3dTranspose\' Op passed '
+                             + str(pad_mode) + ', should be one of values in \'valid\', \'same\', \'pad\'.')
+        self.is_valid = self.pad_mode == 'valid'
+        self.is_same = self.pad_mode == 'same'
+        self.is_pad = self.pad_mode == 'pad'
+
+        self.dilation = dilation
+        self.group = Validator.check_positive_int(group)
+        self.has_bias = has_bias
+
+        if (not isinstance(kernel_size[0], int)) or (not isinstance(kernel_size[1], int)) or \
+           (not isinstance(kernel_size[2], int)) or isinstance(kernel_size[0], bool) or \
+                isinstance(kernel_size[1], bool) or isinstance(kernel_size[2], bool) or \
+                kernel_size[0] < 1 or kernel_size[1] < 1 or kernel_size[2] < 1:
+            raise ValueError("Attr 'kernel_size' of 'Conv3DTranspose' Op passed "
+                             + str(self.kernel_size) + ", should be a int or tuple and equal to or greater than 1.")
+        if (not isinstance(stride[0], int)) or (not isinstance(stride[1], int)) or \
+           (not isinstance(stride[2], int)) or isinstance(stride[0], bool) or \
+                isinstance(stride[1], bool) or isinstance(stride[2], bool) or \
+                stride[0] < 1 or stride[1] < 1 or stride[2] < 1:
+            raise ValueError("Attr 'stride' of 'Conv3DTranspose' Op passed "
+                             + str(self.stride) + ", should be a int or tuple and equal to or greater than 1.")
+        if (not isinstance(dilation[0], int)) or (not isinstance(dilation[1], int)) or \
+           (not isinstance(dilation[2], int)) or isinstance(dilation[0], bool) or \
+                isinstance(dilation[1], bool) or isinstance(dilation[2], bool) or \
+                dilation[0] < 1 or dilation[1] < 1 or dilation[2] < 1:
+            raise ValueError("Attr 'dilation' of 'Conv3DTranspose' Op passed "
+                             + str(self.dilation) + ", should be a int or tuple and equal to or greater than 1.")
+        if in_channels % group != 0:
+            raise ValueError("Attr 'in_channels' of 'Conv3DTranspose' Op must be divisible by "
+                             "attr 'group' of 'Conv3DTranspose' Op.")
+        if out_channels % group != 0:
+            raise ValueError("Attr 'out_channels' of 'Conv3DTranspose' Op must be divisible by "
+                             "attr 'group' of 'Conv3DTranspose' Op.")
+        
+        shape = [in_channels, out_channels // group, *kernel_size] if self.format == "NCDHW" else \
+                [in_channels, *kernel_size, out_channels // group]
+        self.weight = Parameter(initializer(self.weight_init, shape), name='weight')
+
+        if Validator.check_bool(has_bias):
+            self.bias = Parameter(initializer(bias_init, [out_channels]), name='bias')
+
+        # cause Conv3DBackpropInput's out_channel refers to Conv3D's out_channel.
+        self.conv3d_transpose = P.Conv3DBackpropInput(out_channel=in_channels,
+                                                      kernel_size=kernel_size,
+                                                      mode=1,
+                                                      pad_mode=pad_mode,
+                                                      pad=padding,
+                                                      stride=stride,
+                                                      dilation=dilation,
+                                                      group=group,
+                                                      data_format=self.format)
+        self.shape = P.Shape()
+        self.bias_add = P.BiasAdd()
+        if isinstance(self.padding, int):
+            self.padding_head = self.padding
+            self.padding_tail = self.padding
+            self.padding_top = self.padding
+            self.padding_bottom = self.padding
+            self.padding_left = self.padding
+            self.padding_right = self.padding
+        else:
+            self.padding_head, self.padding_tail, self.padding_top, self.padding_bottom, self.padding_left, self.padding_right = self.padding
+
+    # def shard(self, strategy):
+    #     self.conv2d_transpose.shard(strategy)
+    #     return self
+
+    def _deconv_output_length(self, input_length, filter_size, stride_size, dilation_size, padding):
+        """Calculate the width and height of output."""
+        length = 0
+        filter_size = filter_size + (filter_size - 1) * (dilation_size - 1)
+        if self.is_valid:
+            if filter_size - stride_size > 0:
+                length = input_length * stride_size + filter_size - stride_size
+            else:
+                length = input_length * stride_size
+        elif self.is_same:
+            length = input_length * stride_size
+        elif self.is_pad:
+            length = input_length * stride_size - padding + filter_size - stride_size
+
+        return length
+
+    def construct(self, x):
+        if self.format == "NCDHW":
+            n, _, d, h, w = self.shape(x)
+        else:
+            n, d, h, w, _ = self.shape(x)
+        d_out = self._deconv_output_length(d, self.kernel_size[0], self.stride[0], self.dilation[0],
+                                           self.padding_head + self.padding_tail)
+        h_out = self._deconv_output_length(h, self.kernel_size[1], self.stride[1], self.dilation[1],
+                                           self.padding_top + self.padding_bottom)
+        w_out = self._deconv_output_length(w, self.kernel_size[2], self.stride[2], self.dilation[2],
+                                           self.padding_left + self.padding_right)
+        if self.format == "NCDHW":
+            output = self.conv3d_transpose(self.weight, x, (n, self.out_channels, d_out, h_out, w_out))
+        else:
+            output = self.conv3d_transpose(self.weight, x, (n, d_out, h_out, w_out, self.out_channels))
+        if self.has_bias:
+            return self.bias_add(output, self.bias)
+        return output
+
+    def extend_repr(self):
+        s = 'input_channels={}, output_channels={}, kernel_size={},' \
+            'stride={},  pad_mode={}, padding={}, dilation={}, ' \
+            'group={}, has_bias={},' \
+            'weight_init={}, bias_init={}, format={}'.format(self.in_channels,
+                                                  self.out_channels,
+                                                  self.kernel_size,
+                                                  self.stride,
+                                                  self.pad_mode,
+                                                  self.padding,
+                                                  self.dilation,
+                                                  self.group,
+                                                  self.has_bias,
+                                                  self.weight_init,
+                                                  self.bias_init,
+                                                    self.format)
         return s
